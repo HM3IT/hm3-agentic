@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from collections.abc import AsyncGenerator
 
-from google.auth.exceptions import RefreshError 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -53,7 +53,7 @@ logger = getLogger()
 chat = get_settings().chat
 
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [chat.YOUTUBE_SCOPES]
 
 API_BASE_URL = chat.API_BASE_URL
 USER_AGENT = chat.USER_AGENT_NAME
@@ -307,12 +307,10 @@ async def save_chat_history(
         await f.write(team_state)
 
 
-def authenticate_youtube():
+async def authenticate_youtube():
     creds = None
- 
-    logger.info(f"Looking for token at {token_filepath!r}")
+
     if os.path.exists(token_filepath):
-        logger.info("Found the token file")
         try:
             creds = Credentials.from_authorized_user_file(token_filepath, SCOPES)
             logger.info("Loaded stored credentials")
@@ -320,7 +318,6 @@ def authenticate_youtube():
             logger.info(f"Failed to load stored credentials: {e!r}")
             creds = None
 
-    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
@@ -337,20 +334,16 @@ def authenticate_youtube():
             )
             creds = flow.run_local_server(port=0)
             logger.info("Completed new OAuth flow")
- 
-        with open(token_filepath, "w") as token:
-            token.write(creds.to_json())
-            logger.info(f"Saved new token to {token_filepath!r}")
 
- 
-    service = build("youtube", "v3", credentials=creds)
-    logger.info("YouTube client ready")
-    return service
+        async with aiofile.async_open(token_filepath, "w") as token:
+            await token.write(creds.to_json())
+
+    return build("youtube", "v3", credentials=creds)
 
 
-def upload_youtube_video(
+async def upload_youtube_video(
     youtube, file_path, title, description, tags, category_id, privacy_status
-):
+) -> dict[str, Any]:
     body = dict(
         snippet=dict(
             title=title, description=description, tags=tags, categoryId=category_id
@@ -366,7 +359,11 @@ def upload_youtube_video(
         status, response = request.next_chunk()
         if status:
             print(f"Uploaded {int(status.progress() * 100)}%")
-    print(f"Upload complete! Video ID: {response['id']}")
+
+    return {
+        "message": f"Upload complete! Video ID: {response['id']}",
+        "status_code": 201,
+    }
 
 
 async def save_download_history(

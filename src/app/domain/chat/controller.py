@@ -1,3 +1,4 @@
+import aiofile
 import warnings
 from uuid import UUID
 
@@ -5,10 +6,10 @@ from typing import Annotated
 from pathlib import Path
 from structlog import getLogger
 from pydantic import BaseModel
-
-from litestar import Controller, get, post
-from litestar.exceptions import HTTPException
-from litestar.response import Stream
+from google_auth_oauthlib.flow import Flow
+from litestar import Controller, get, post, Request
+from litestar.exceptions import HTTPException, NotAuthorizedException
+from litestar.response import Stream, Response
 
 from app.config.base import get_settings
 from app.domain.chat.utils import chat_stream, get_team_state, get_chat_history, login, authenticate_youtube, upload_youtube_video
@@ -16,7 +17,7 @@ from app.domain.chat.tools import (
     download_reddit_video,
     upload_to_youtube,
     save_token,
-    generate_auth_url,
+    generate_auth_url_youtube,
     verify_token,
 )
 
@@ -44,7 +45,10 @@ model_family = chat.MODEL_FAMILY
 api_key = chat.MODEL_API_KEY
 base_url = chat.MODEL_BASE_URL
 chat_history_folder_path = chat.CHAT_HISTORY_FOLDER_PATH
-
+CLIENT_SECRETS=chat.CLIENT_SECRETS_FILEPATH
+SCOPES= [chat.YOUTUBE_SCOPES]
+TOKEN=chat.TOKEN_FILEPATH
+OAUTH_REDIRECT_URI=chat.OAUTH_REDIRECT_URI
 
 model_client = OpenAIChatCompletionClient(
     model=model_name,
@@ -79,26 +83,24 @@ class ChatController(Controller):
         if res.get("error"):
             raise HTTPException(status_code=401, detail="Failed to authenticate")
         await save_token(session_id, res["access_token"])
+        
+        
+        
+    @get("/api/chats/oauth2callback")
+    async def oauth2callback(self, request:Request) -> Response:
+        code = request.query_params.get("code")
+        if not code:
+            raise NotAuthorizedException("Missing code parameter")
 
-    @get("/api/chats/test")
-    async def test(self) -> dict:
-        service = authenticate_youtube()
-        if service:
-            logger.info("Good servier")
-        try:
-             
-            upload_youtube_video(
-                service,
-                file_path="../download_history/WutheringWavesLeaks/Zani gameplay.mp4",
-                title="Zani gameplay",
-                description="Gameplay footage of Zani from Wuthering Waves. This video was originally shared on the WutheringWavesLeaks subreddit.",
-                tags=['tag1', 'tag2'],
-                category_id='22',   
-                privacy_status='private' 
-            )
-            return {"message": "Successfully uploaded video to YouTube", "status_code": 201}
-        except Exception as e:
-            return {"error": "Failed to upload video to YouTube", "status_code": 500}
+        flow = Flow.from_client_secrets_file(
+            CLIENT_SECRETS, scopes=SCOPES, redirect_uri=OAUTH_REDIRECT_URI
+        )
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        async with aiofile.async_open(TOKEN, "w") as f:
+            await f.write(creds.to_json())
+        return Response(status_code=200, content="Authenticated successfully", media_type="application/json")
+
     
     @get("/api/chats/{session_id: str}")
     async def list_chats(self, session_id: UUID) -> list:
@@ -135,7 +137,7 @@ class ChatController(Controller):
             name="hm3_auth_agent",
             description="An agent that can generate an authentication URL for the user and verify user's access after authentication.",
             model_client=model_client,
-            tools=[generate_auth_url, verify_token],
+            tools=[generate_auth_url_youtube, verify_token],
             reflect_on_tool_use=False,
             system_message=f"""
             You are an auth agent for chat session ID: {session_id}.

@@ -14,9 +14,10 @@ from .utils import (
     save_download_history,
     upload_youtube_video,
 )
+from google_auth_oauthlib.flow import Flow
 
 __all__ = [
-    "generate_auth_url",
+    "generate_auth_url_youtube",
     "verify_token",
     "save_token",
     "download_reddit_video",
@@ -36,11 +37,13 @@ REDDIT_PASSWORD = chat.REDDIT_PASSWORD
 REDDIT_USERNAME = chat.REDDIT_USERNAME
 REDDIT_AGENT_NAME = chat.REDDIT_AGENT_NAME
 DOWNLOAD_FOLDER_PATH = chat.DOWNLOAD_FOLDER_PATH
+SCOPES = [chat.YOUTUBE_SCOPES]
+CLIENT_SECRETS = chat.CLIENT_SECRETS_FILEPATH
+OAUTH_REDIRECT_URI = chat.OAUTH_REDIRECT_URI
 
-
-async def generate_auth_url(session_id: Annotated[UUID, "The chat session ID"]) -> str:
-    """Generate an authentication URL for the user."""
-    return f"{chat.CHAT_API_BASE}/api/chats/authenticate?session_id={session_id}"
+# async def generate_auth_url(session_id: Annotated[UUID, "The chat session ID"]) -> str:
+#     """Generate an authentication URL for the user."""
+#     return f"{chat.CHAT_API_BASE}/api/chats/authenticate?session_id={session_id}"
 
 
 async def verify_token(session_id: Annotated[UUID, "The chat session ID"]) -> str:
@@ -97,7 +100,9 @@ async def download_reddit_video(
 
         title_lower = submission.title.lower()
 
-        if desired_keywords and not any(kw.lower() in title_lower for kw in desired_keywords):
+        if desired_keywords and not any(
+            kw.lower() in title_lower for kw in desired_keywords
+        ):
             continue
 
         if not getattr(submission, "is_video", False):
@@ -122,7 +127,6 @@ async def download_reddit_video(
             }
         )
 
-    
     if downloaded:
         await save_download_history(session_id=session_id, history=downloaded)
         return downloaded
@@ -160,6 +164,24 @@ async def get_youtube_categories(
     return categories
 
 
+def generate_auth_url_youtube() -> dict[str, str]:
+    """
+    Starts the OAuth flow by generating an endpoint to auth URL.
+    """
+    logger.info("SCOPE HEHE")
+    logger.info(SCOPES)
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS,
+        scopes=SCOPES,
+        redirect_uri=OAUTH_REDIRECT_URI,
+    )
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+    )
+    return {"oauth_url": auth_url}
+
+
 async def upload_to_youtube(
     title: str, description: str, file_path: str, category_id: int
 ) -> dict[str, str | int]:
@@ -170,17 +192,18 @@ async def upload_to_youtube(
         file_path (str): The path to the video file.
         category_id (int): The category ID of the YouTube video.
     """
-    try:
-        youtube = await authenticate_youtube()
-        upload_youtube_video(
-            youtube,
-            file_path=file_path,
-            title=title,
-            description=description,
-            tags=["tag1", "tag2"],
-            category_id=str(category_id),
-            privacy_status="private",
-        )
-        return {"message": "Successfully uploaded video to YouTube", "status_code": 201}
-    except Exception as e:
+
+    youtube = await authenticate_youtube()
+    response = await upload_youtube_video(
+        youtube,
+        file_path=file_path,
+        title=title,
+        description=description,
+        tags=["tag1", "tag2"],
+        category_id=str(category_id),
+        privacy_status="private",
+    )
+
+    if response["status_code"] != 201:
         return {"error": "Failed to upload video to YouTube", "status_code": 500}
+    return {"message": "Successfully uploaded video to YouTube", "status_code": 201}

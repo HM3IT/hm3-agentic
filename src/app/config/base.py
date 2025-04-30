@@ -235,9 +235,7 @@ class ChatSettings:
     CHAT_SYSTEM_PROMPT: str = field(default_factory=get_env("CHAT_SYSTEM_PROMPT", ""))
 
     CHAT_HISTORY_FOLDER_PATH: str = field(
-        default_factory=get_env(
-            "CHAT_HISTORY_FILE_PATH", "/workspace/app/chat_history"
-        )
+        default_factory=get_env("CHAT_HISTORY_FILE_PATH", "/workspace/app/chat_history")
     )
     REDDIT_AGENT_NAME: str = field(default_factory=get_env("REDDIT_AGENT_NAME", ""))
     REDDIT_CLIENT_ID: str = field(default_factory=get_env("REDDIT_CLIENT_ID", ""))
@@ -255,6 +253,13 @@ class ChatSettings:
     TOKEN_FILEPATH: str = field(default_factory=get_env("TOKEN_FILEPATH", ""))
     CLIENT_SECRETS_FILEPATH: str = field(
         default_factory=get_env("CLIENT_SECRETS_FILEPATH", "")
+    )
+    YOUTUBE_SCOPES: str = field(default_factory=get_env("YOUTUBE_SCOPES", ""),
+    )
+    OAUTH_REDIRECT_URI: str = field(
+        default_factory=get_env(
+            "OAUTH_REDIRECT_URI", "http://localhost:8000/api/chats/oauth2callback"
+        )
     )
 
 

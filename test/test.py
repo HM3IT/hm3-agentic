@@ -7,8 +7,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 
-token_filepath="token.json"
-clinet_secrets_filepath="client_secrets.json"
+token_filepath="../credentials/token.json"
+clinet_secrets_filepath="../credentials/client_secrets.json"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
