@@ -72,7 +72,7 @@ class ChatAuth(BaseModel):
 
 
 class ChatController(Controller):
-
+    tags = ["Chats"]
     @post("/api/chats/authenticate")
     async def authenticate(self, data: ChatAuth, session_id: UUID) -> None:
         res = await login(session_id, data.email, data.password)

@@ -38,6 +38,10 @@ services:
       SAQ_USE_SERVER_LIFESPAN: "false"
     env_file:
       - .env
+    volumes:
+      - ./chat_history:/workspace/app/chat_history
+      - ./download_history:/workspace/app/download_history
+
  
   # migrator:
   #   build:
