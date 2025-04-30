@@ -236,7 +236,7 @@ class ChatSettings:
 
     CHAT_HISTORY_FOLDER_PATH: str = field(
         default_factory=get_env(
-            "CHAT_HISTORY_FILE_PATH", "/workspace/app/src/app/domain/chat/"
+            "CHAT_HISTORY_FILE_PATH", "/workspace/app/chat_history"
         )
     )
     REDDIT_AGENT_NAME: str = field(default_factory=get_env("REDDIT_AGENT_NAME", ""))
@@ -249,7 +249,7 @@ class ChatSettings:
 
     DOWNLOAD_FOLDER_PATH: str = field(
         default_factory=get_env(
-            "DOWNLOAD_FOLDER_PATH", "/workspace/app/src/app/domain/chat/download/"
+            "DOWNLOAD_FOLDER_PATH", "/workspace/app/download_history"
         )
     )
     TOKEN_FILEPATH: str = field(default_factory=get_env("TOKEN_FILEPATH", ""))

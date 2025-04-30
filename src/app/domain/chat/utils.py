@@ -10,7 +10,8 @@ from structlog import getLogger
 from datetime import datetime, timezone
 
 from collections.abc import AsyncGenerator
- 
+
+from google.auth.exceptions import RefreshError 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -45,6 +46,7 @@ __all__ = [
     "update_token",
     "load_chat_history",
     "get_chat_history",
+    "upload_youtube_video",
 ]
 
 logger = getLogger()
@@ -71,7 +73,7 @@ async def load_sessions():
 
 
 async def save_sessions(sessions):
-    logger.info("saving data")
+    logger.info("saving sessions")
     async with aiofile.async_open(session_file_path, "w") as f:
         await f.write(json.dumps(sessions, indent=2))
 
@@ -243,10 +245,10 @@ async def chat_stream(
             source = getattr(message, "source", "")
             content = getattr(message, "content", "")
 
-            # if isinstance(message, UserInputRequestedEvent):
-            #     logger.info("Caught UserInputRequestedEvent")
-            #     termination.set()
-            #     break
+            if isinstance(message, UserInputRequestedEvent):
+                logger.info("Caught UserInputRequestedEvent")
+                termination.set()
+                break
 
             if source == "":
                 continue
@@ -305,41 +307,48 @@ async def save_chat_history(
         await f.write(team_state)
 
 
-def fetch_new_submissions(subreddit: Any, limit: int = 10) -> list:
-    submissions = []
-    for submission in subreddit.new(limit=limit):
-        submissions.append(submission)
-    return submissions
-
-
-def fetch_hot_submissions(subreddit: Any, limit: int = 10) -> list:
-    submissions = []
-    for submission in subreddit.hot(limit=limit):
-        submissions.append(submission)
-    return submissions
-
-
-async def authenticate_youtube():
+def authenticate_youtube():
     creds = None
-
+ 
+    logger.info(f"Looking for token at {token_filepath!r}")
     if os.path.exists(token_filepath):
-        creds = Credentials.from_authorized_user_file(token_filepath, SCOPES)
+        logger.info("Found the token file")
+        try:
+            creds = Credentials.from_authorized_user_file(token_filepath, SCOPES)
+            logger.info("Loaded stored credentials")
+        except Exception as e:
+            logger.info(f"Failed to load stored credentials: {e!r}")
+            creds = None
 
+    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+                logger.info("Refreshed access token")
+            except RefreshError:
+                logger.info("Refresh token invalid; deleting and re-authorizing")
+                os.remove(token_filepath)
+                creds = None
+
+        if not creds:
             flow = InstalledAppFlow.from_client_secrets_file(
                 clinet_secrets_filepath, SCOPES
             )
             creds = flow.run_local_server(port=0)
+            logger.info("Completed new OAuth flow")
+ 
+        with open(token_filepath, "w") as token:
+            token.write(creds.to_json())
+            logger.info(f"Saved new token to {token_filepath!r}")
 
-        async with aiofile.async_open(token_filepath, "w") as f:
-            await f.write(creds.to_json())
-    return build("youtube", "v3", credentials=creds)
+ 
+    service = build("youtube", "v3", credentials=creds)
+    logger.info("YouTube client ready")
+    return service
 
 
-def upload_video(
+def upload_youtube_video(
     youtube, file_path, title, description, tags, category_id, privacy_status
 ):
     body = dict(
@@ -363,7 +372,7 @@ def upload_video(
 async def save_download_history(
     session_id: Annotated[UUID, "The chat session ID"], history: list[dict[str, Any]]
 ) -> None:
-    logger.info("saving data")
+    logger.info("saving downloaded history")
     async with aiofile.async_open(f"{download_dir_path}/{session_id}.json", "w") as f:
         await f.write(json.dumps(history, indent=2))
 

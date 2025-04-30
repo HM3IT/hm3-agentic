@@ -61,7 +61,7 @@ ENV PATH="/workspace/app/.venv/bin:/usr/local/bin:$PATH" \
     LC_ALL=C.UTF-8 \
     LITESTAR_APP="${LITESTAR_APP}"
 
-RUN apt-get install -y --no-install-recommends git build-essential curl \
+RUN apt-get install -y --no-install-recommends git build-essential curl ffmpeg\
     && apt-get autoremove -y \
     && apt-get clean -y \
     && rm -rf /root/.cache \

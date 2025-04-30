@@ -11,7 +11,7 @@ from litestar.exceptions import HTTPException
 from litestar.response import Stream
 
 from app.config.base import get_settings
-from app.domain.chat.utils import chat_stream, get_team_state, get_chat_history, login
+from app.domain.chat.utils import chat_stream, get_team_state, get_chat_history, login, authenticate_youtube, upload_youtube_video
 from app.domain.chat.tools import (
     download_reddit_video,
     upload_to_youtube,
@@ -80,6 +80,26 @@ class ChatController(Controller):
             raise HTTPException(status_code=401, detail="Failed to authenticate")
         await save_token(session_id, res["access_token"])
 
+    @get("/api/chats/test")
+    async def test(self) -> dict:
+        service = authenticate_youtube()
+        if service:
+            logger.info("Good servier")
+        try:
+             
+            upload_youtube_video(
+                service,
+                file_path="../download_history/WutheringWavesLeaks/Zani gameplay.mp4",
+                title="Zani gameplay",
+                description="Gameplay footage of Zani from Wuthering Waves. This video was originally shared on the WutheringWavesLeaks subreddit.",
+                tags=['tag1', 'tag2'],
+                category_id='22',   
+                privacy_status='private' 
+            )
+            return {"message": "Successfully uploaded video to YouTube", "status_code": 201}
+        except Exception as e:
+            return {"error": "Failed to upload video to YouTube", "status_code": 500}
+    
     @get("/api/chats/{session_id: str}")
     async def list_chats(self, session_id: UUID) -> list:
         """List all chats for a given session."""
@@ -163,6 +183,7 @@ class ChatController(Controller):
             - After hm3_auth_agent an auth URL, always select the hm3_auth_agent again to send a message to the user before selecting the user_agent.
             - Only select the hm3_general_agent if the last message was from the user.
             - After a successful tool call, before selecting the next agent, always reselect its parent agent to let it send a message to the user about the  result.
+            - Task related with reddit, Youtube, and any other social media platforms, always select the hm3_social_media_agent.
 
             Current conversation context:
             {history}

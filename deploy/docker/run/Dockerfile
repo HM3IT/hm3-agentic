@@ -40,7 +40,7 @@ ENV GRPC_PYTHON_BUILD_WITH_CYTHON=1 \
     LC_ALL=C.UTF-8
 
 # Install build dependencies (C toolchain, git, etc.)
-RUN apt-get install -y --no-install-recommends git build-essential curl \
+RUN apt-get install -y --no-install-recommends git build-essential curl ffmpeg\
   && apt-get autoremove -y \
   && apt-get clean -y \
   && rm -rf /root/.cache \

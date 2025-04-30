@@ -1,5 +1,5 @@
 import os
-import praw
+import asyncpraw
 
 from uuid import UUID
 from structlog import get_logger
@@ -11,9 +11,8 @@ from .utils import (
     update_token,
     make_request,
     authenticate_youtube,
-    fetch_hot_submissions,
-    fetch_new_submissions,
-    upload_video,
+    save_download_history,
+    upload_youtube_video,
 )
 
 __all__ = [
@@ -36,6 +35,7 @@ REDDIT_CLIENT_SECRET = chat.REDDIT_CLIENT_SECRET
 REDDIT_PASSWORD = chat.REDDIT_PASSWORD
 REDDIT_USERNAME = chat.REDDIT_USERNAME
 REDDIT_AGENT_NAME = chat.REDDIT_AGENT_NAME
+DOWNLOAD_FOLDER_PATH = chat.DOWNLOAD_FOLDER_PATH
 
 
 async def generate_auth_url(session_id: Annotated[UUID, "The chat session ID"]) -> str:
@@ -61,16 +61,21 @@ async def save_token(
 
 
 async def download_reddit_video(
-    subreddit_name: str, algorithm: Literal["top", "new"], limit: int = 1
+    session_id: Annotated[UUID, "The chat session ID"],
+    subreddit_name: str,
+    algorithm: Literal["top", "new"],
+    desired_keywords: list[str] = [],
+    limit: int = 1,
 ) -> list[dict[str, Any]]:
     """Download videos from a subreddit.
     Args:
+        session_id (str): The chat session ID.
         subreddit_name (str): The name of the subreddit to download videos from.
         algorithm (Literal["top", "new"]): The algorithm to use for downloading videos.
+        desired_keywords (list[str], optional): The keywords to search for in the video title.
         limit (int, optional): The number of videos to download. Defaults to 1.
-
     """
-    reddit = praw.Reddit(
+    reddit = asyncpraw.Reddit(
         client_id=REDDIT_CLIENT_ID,
         client_secret=REDDIT_CLIENT_SECRET,
         user_agent=REDDIT_AGENT_NAME,
@@ -78,35 +83,51 @@ async def download_reddit_video(
         password=REDDIT_PASSWORD,
     )
 
-    path = f"./downloads/{subreddit_name}"
+    folder_path = f"{DOWNLOAD_FOLDER_PATH}/{subreddit_name}"
+    os.makedirs(folder_path, exist_ok=True)
 
-    os.makedirs(path, exist_ok=True)
-    subreddit = reddit.subreddit(subreddit_name)
-    if algorithm == "top":
-        subbmissions = fetch_hot_submissions(subreddit, limit=limit)
-    elif algorithm == "new":
-        subbmissions = fetch_new_submissions(subreddit, limit=limit)
-    else:
-        raise ValueError("Invalid algorithm")
+    subreddit = await reddit.subreddit(subreddit_name)
 
-    downloaded_file = []
-    for submission in subbmissions:
+    posts = subreddit.top(limit=5) if algorithm == "top" else subreddit.new(limit=5)
 
-        reddit = Downloader(max_q=True, path=path)
-        reddit.url = submission.url
-        reddit.download()
+    downloaded = []
+    async for submission in posts:
+        if len(downloaded) >= limit:
+            break
 
-        downloaded_file.append(
+        title_lower = submission.title.lower()
+
+        if desired_keywords and not any(kw.lower() in title_lower for kw in desired_keywords):
+            continue
+
+        if not getattr(submission, "is_video", False):
+            continue
+
+        try:
+            dl = Downloader(max_q=True, path=folder_path, filename=submission.title)
+            dl.url = submission.url
+            dl.download()
+        except Exception as e:
+
+            print(f"Skipping {submission.url!r}: {e}")
+            continue
+
+        downloaded.append(
             {
                 "title": submission.title,
                 "url": submission.url,
-                "filepath": path,
+                "file_path": f"{folder_path}/{submission.title}.mp4",
                 "description": submission.selftext,
                 "category_id": "22",
             }
         )
 
-    return downloaded_file
+    
+    if downloaded:
+        await save_download_history(session_id=session_id, history=downloaded)
+        return downloaded
+    await reddit.close()
+    return [{"message": "No videos found", "status_code": 200}]
 
 
 async def get_youtube_categories(
@@ -151,7 +172,7 @@ async def upload_to_youtube(
     """
     try:
         youtube = await authenticate_youtube()
-        upload_video(
+        upload_youtube_video(
             youtube,
             file_path=file_path,
             title=title,

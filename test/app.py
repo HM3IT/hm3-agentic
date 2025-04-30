@@ -40,8 +40,6 @@ model_name = os.environ["MODEL_NAME"]
 model_family = os.environ["MODEL_FAMILY"]
 api_key = os.environ["MODEL_API_KEY"]
 base_url = os.environ["MODEL_BASE_URL"]
-chat_history_folder_path = os.environ["CHAT_HISTORY_FOLDER_PATH"]
-
 
 model_client = OpenAIChatCompletionClient(
     model=model_name,

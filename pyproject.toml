@@ -32,11 +32,11 @@ dependencies = [
     "ipykernel>=6.29.5",
     "python-dotenv>=1.0.1",
     "autogen-ext[mcp,openai,web-surfer]>=0.4.9.2",
-    "praw>=7.8.1",
     "redvid>=2.0.5",
     "google-api-python-client>=2.166.0",
     "google-auth-oauthlib>=1.2.1",
     "google-auth-httplib2>=0.2.0",
+    "asyncpraw>=7.2.0",
 ]
 
 keywords = ["litestar", "sqlalchemy", "alembic", "fullstack", "api", "asgi", "litestar", "spa"]
