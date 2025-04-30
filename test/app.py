@@ -1,22 +1,16 @@
+import os
+import asyncio
 import warnings
 from uuid import UUID
 
-from typing import Annotated
-from pathlib import Path
+from dotenv import load_dotenv
 from structlog import getLogger
-from pydantic import BaseModel
 
-from litestar import Controller, get, post
-from litestar.exceptions import HTTPException
-from litestar.response import Stream
-import asyncio
 
-from app.config.base import get_settings
-from app.domain.chat.utils import chat_stream, get_team_state, get_chat_history, login
-from app.domain.chat.tools import (
+from utils import get_team_state
+from tools import (
     download_reddit_video,
     upload_to_youtube,
-    save_token,
     generate_auth_url,
     verify_token,
 )
@@ -30,8 +24,10 @@ from autogen_agentchat.conditions import (
     TimeoutTermination,
     ExternalTermination,
 )
+from autogen_agentchat.ui import Console
 
-chat = get_settings().chat
+load_dotenv()
+
 logger = getLogger()
 
 warnings.filterwarnings(
@@ -40,11 +36,11 @@ warnings.filterwarnings(
 warnings.filterwarnings("ignore", message="Resolved model mismatch: Claude-3.5-Sonnet*")
 
 
-model_name = chat.MODEL_NAME
-model_family = chat.MODEL_FAMILY
-api_key = chat.MODEL_API_KEY
-base_url = chat.MODEL_BASE_URL
-chat_history_folder_path = chat.CHAT_HISTORY_FOLDER_PATH
+model_name = os.environ["MODEL_NAME"]
+model_family = os.environ["MODEL_FAMILY"]
+api_key = os.environ["MODEL_API_KEY"]
+base_url = os.environ["MODEL_BASE_URL"]
+chat_history_folder_path = os.environ["CHAT_HISTORY_FOLDER_PATH"]
 
 
 model_client = OpenAIChatCompletionClient(
@@ -65,7 +61,7 @@ model_client = OpenAIChatCompletionClient(
 session_id = "899b689f-34d9-4ae6-9c72-a0bd032aabe6"
 user_input = "Hello!"
 
-request_agent = AssistantAgent(
+social_media_agent = AssistantAgent(
     name="hm3_social_media_agent",
     description="An agent that can interact with Reddit and YouTube.",
     model_client=model_client,
@@ -107,22 +103,17 @@ general_agent = AssistantAgent(
     """,
 )
 
-
-def ask_input(prompt: str):
-    return input(prompt or "Action required: ")
-
-
 user_agent = UserProxyAgent(
     "user_agent",
     description="A human user. This agent is to be selected if the assistant agents need human action to work",
-    input_func=ask_input,
+    input_func=input,
 )
 
 external_termination = ExternalTermination()
 
 hm3_team = SelectorGroupChat(
     model_client=model_client,
-    participants=[request_agent, auth_agent, user_agent, general_agent],
+    participants=[social_media_agent, auth_agent, user_agent, general_agent],
     termination_condition=external_termination
     | TextMentionTermination("TERMINATE")
     | MaxMessageTermination(25)
@@ -149,5 +140,5 @@ hm3_team = SelectorGroupChat(
 team_state = asyncio.run(get_team_state(UUID(session_id)))
 if team_state:
     asyncio.run(hm3_team.load_state(team_state))
-
-Stream(chat_stream(UUID(session_id), hm3_team, user_input, external_termination))
+    print("Loaded state")
+asyncio.run(Console(hm3_team.run_stream(task="Hello")))

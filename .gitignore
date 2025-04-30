@@ -173,4 +173,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 credentials/
-chat_histories/
+chat_history/
+download_history/
