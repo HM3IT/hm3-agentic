@@ -246,7 +246,6 @@ class ChatSettings:
     )
     REDDIT_USERNAME: str = field(default_factory=get_env("REDDIT_USERNAME", ""))
     REDDIT_PASSWORD: str = field(default_factory=get_env("REDDIT_PASSWORD", ""))
-    SUBREDDIT_NAME: str = field(default_factory=get_env("SUBREDDIT_NAME", ""))
 
     DOWNLOAD_FOLDER_PATH: str = field(
         default_factory=get_env(

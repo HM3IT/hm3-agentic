@@ -1,6 +1,6 @@
 import warnings
 from uuid import UUID
- 
+
 from typing import Annotated
 from pathlib import Path
 from structlog import getLogger

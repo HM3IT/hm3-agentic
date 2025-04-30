@@ -36,7 +36,6 @@ REDDIT_CLIENT_SECRET = chat.REDDIT_CLIENT_SECRET
 REDDIT_PASSWORD = chat.REDDIT_PASSWORD
 REDDIT_USERNAME = chat.REDDIT_USERNAME
 REDDIT_AGENT_NAME = chat.REDDIT_AGENT_NAME
-SUBREDDIT_NAME = chat.SUBREDDIT_NAME
 
 
 async def generate_auth_url(session_id: Annotated[UUID, "The chat session ID"]) -> str:
@@ -82,7 +81,7 @@ async def download_reddit_video(
     path = f"./downloads/{subreddit_name}"
 
     os.makedirs(path, exist_ok=True)
-    subreddit = reddit.subreddit(SUBREDDIT_NAME)
+    subreddit = reddit.subreddit(subreddit_name)
     if algorithm == "top":
         subbmissions = fetch_hot_submissions(subreddit, limit=limit)
     elif algorithm == "new":
@@ -151,7 +150,7 @@ async def upload_to_youtube(
         category_id (int): The category ID of the YouTube video.
     """
     try:
-        youtube = authenticate_youtube()
+        youtube = await authenticate_youtube()
         upload_video(
             youtube,
             file_path=file_path,

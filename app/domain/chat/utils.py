@@ -243,10 +243,10 @@ async def chat_stream(
             source = getattr(message, "source", "")
             content = getattr(message, "content", "")
 
-            if isinstance(message, UserInputRequestedEvent):
-                logger.info("Caught UserInputRequestedEvent")
-                termination.set()
-                break
+            # if isinstance(message, UserInputRequestedEvent):
+            #     logger.info("Caught UserInputRequestedEvent")
+            #     termination.set()
+            #     break
 
             if source == "":
                 continue
@@ -319,7 +319,7 @@ def fetch_hot_submissions(subreddit: Any, limit: int = 10) -> list:
     return submissions
 
 
-def authenticate_youtube():
+async def authenticate_youtube():
     creds = None
 
     if os.path.exists(token_filepath):
@@ -334,8 +334,8 @@ def authenticate_youtube():
             )
             creds = flow.run_local_server(port=0)
 
-        with open(token_filepath, "w") as token:
-            token.write(creds.to_json())
+        async with aiofile.async_open(token_filepath, "w") as f:
+            await f.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
 
 
