@@ -223,6 +223,7 @@ dependencies = [
     { name = "redvid" },
     { name = "structlog" },
     { name = "tiktoken" },
+    { name = "youtube-transcript-api" },
 ]
 
 [package.dev-dependencies]
@@ -310,6 +311,7 @@ requires-dist = [
     { name = "redvid", specifier = ">=2.0.5" },
     { name = "structlog", specifier = ">=25.2.0" },
     { name = "tiktoken", specifier = ">=0.9.0" },
+    { name = "youtube-transcript-api", specifier = ">=1.0.3" },
 ]
 
 [package.metadata.requires-dev]

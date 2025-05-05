@@ -15,6 +15,7 @@ from .utils import (
     upload_youtube_video,
 )
 from google_auth_oauthlib.flow import Flow
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
 
 __all__ = [
     "generate_auth_url_youtube",
@@ -37,7 +38,7 @@ REDDIT_PASSWORD = chat.REDDIT_PASSWORD
 REDDIT_USERNAME = chat.REDDIT_USERNAME
 REDDIT_AGENT_NAME = chat.REDDIT_AGENT_NAME
 DOWNLOAD_FOLDER_PATH = chat.DOWNLOAD_FOLDER_PATH
-SCOPES = [chat.YOUTUBE_SCOPES]
+SCOPES = chat.YOUTUBE_SCOPES
 CLIENT_SECRETS = chat.CLIENT_SECRETS_FILEPATH
 OAUTH_REDIRECT_URI = chat.OAUTH_REDIRECT_URI
 
@@ -134,6 +135,60 @@ async def download_reddit_video(
     return [{"message": "No videos found", "status_code": 200}]
 
 
+async def comment_on_youtube(
+    video_id: str,
+    comment_text: str,
+) -> dict[str, Any]:
+    """
+    Adds a comment to a YouTube video.
+
+    Args:
+        session_id (UUID): The chat session ID.
+        video_id (str): The ID of the YouTube video to comment on.
+        comment_text (str): The text of the comment to add.
+    """
+
+    youtube = await authenticate_youtube()
+    body = {
+        "snippet": {
+            "videoId": video_id,
+            "topLevelComment": {"snippet": {"textOriginal": comment_text}},
+        }
+    }
+    try:
+        youtube.commentThreads().insert(part="snippet", body=body).execute()
+        return {"message": "Comment posted", "status_code": 201}
+    except Exception as e:
+        return {"error": str(e), "status_code": 500}
+
+
+async def get_video_details(
+    session_id: Annotated[UUID, "The chat session ID"], video_id: str
+) -> dict:
+    """
+    Retrieves the details of a YouTube video.
+
+    Args:
+        session_id (UUID): The chat session ID.
+        video_id (str): The ID of the YouTube video.
+
+    Returns:
+        dict: A dictionary containing the video details.
+    """
+
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        text = " ".join(segment["text"] for segment in transcript)
+        return {"source": "transcript", "content": text}
+    except NoTranscriptFound:
+        pass
+
+    youtube = await authenticate_youtube()
+    resp = youtube.videos().list(part="snippet", id=video_id).execute()
+    desc = resp["items"][0]["snippet"]["description"]
+    return {"source": "description", "content": desc}
+
+
 async def get_youtube_categories(
     session_id: Annotated[UUID, "The chat session ID"], region_code: str = "US"
 ) -> list[dict[str, str]]:
@@ -206,4 +261,11 @@ async def upload_to_youtube(
 
     if response["status_code"] != 201:
         return {"error": "Failed to upload video to YouTube", "status_code": 500}
-    return {"message": "Successfully uploaded video to YouTube", "status_code": 201}
+
+    youtube_id = response["id"]
+
+    return {
+        "message": "Successfully uploaded video to YouTube",
+        "id": youtube_id,
+        "status_code": 201,
+    }

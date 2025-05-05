@@ -254,7 +254,8 @@ class ChatSettings:
     CLIENT_SECRETS_FILEPATH: str = field(
         default_factory=get_env("CLIENT_SECRETS_FILEPATH", "")
     )
-    YOUTUBE_SCOPES: str = field(default_factory=get_env("YOUTUBE_SCOPES", ""),
+    YOUTUBE_SCOPES: list[str] = field(
+        default_factory=lambda: json.loads(os.getenv("YOUTUBE_SCOPES", "[]"))
     )
     OAUTH_REDIRECT_URI: str = field(
         default_factory=get_env(

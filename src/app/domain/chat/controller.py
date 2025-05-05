@@ -19,6 +19,7 @@ from app.domain.chat.tools import (
     save_token,
     generate_auth_url_youtube,
     verify_token,
+    comment_on_youtube
 )
 
 from autogen_ext.models.openai import OpenAIChatCompletionClient
@@ -46,7 +47,7 @@ api_key = chat.MODEL_API_KEY
 base_url = chat.MODEL_BASE_URL
 chat_history_folder_path = chat.CHAT_HISTORY_FOLDER_PATH
 CLIENT_SECRETS=chat.CLIENT_SECRETS_FILEPATH
-SCOPES= [chat.YOUTUBE_SCOPES]
+SCOPES= chat.YOUTUBE_SCOPES
 TOKEN=chat.TOKEN_FILEPATH
 OAUTH_REDIRECT_URI=chat.OAUTH_REDIRECT_URI
 
@@ -77,6 +78,14 @@ class ChatAuth(BaseModel):
 
 class ChatController(Controller):
     tags = ["Chats"]
+    
+    @get("/api/chats/test")
+    async def test(self) -> str:
+        logger.info("SCOPES")
+        # logger.info(list(SCOPES))
+        logger.info(type(SCOPES))
+        logger.info(SCOPES)
+        return "Hello world"
     @post("/api/chats/authenticate")
     async def authenticate(self, data: ChatAuth, session_id: UUID) -> None:
         res = await login(session_id, data.email, data.password)
@@ -124,10 +133,11 @@ class ChatController(Controller):
             tools=[
                 download_reddit_video,
                 upload_to_youtube,
+                comment_on_youtube,
             ],
             reflect_on_tool_use=False,
             system_message=f"""You are a social media agent for chat session ID: {session_id}. Use the tools available to you
-            to get download reddit videos and upload them.
+            to get download reddit videos and upload them. You can also comment on YouTube videos.
             Summarize the output from the tools to the user after each tool call.
             Use "TERMINATE" when the task is complete or when you want the user's input.
             """,

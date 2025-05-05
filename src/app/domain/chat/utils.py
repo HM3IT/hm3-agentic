@@ -53,7 +53,7 @@ logger = getLogger()
 chat = get_settings().chat
 
 
-SCOPES = [chat.YOUTUBE_SCOPES]
+SCOPES = chat.YOUTUBE_SCOPES
 
 API_BASE_URL = chat.API_BASE_URL
 USER_AGENT = chat.USER_AGENT_NAME
@@ -363,6 +363,7 @@ async def upload_youtube_video(
     return {
         "message": f"Upload complete! Video ID: {response['id']}",
         "status_code": 201,
+        "id": response["id"],
     }
 
 
