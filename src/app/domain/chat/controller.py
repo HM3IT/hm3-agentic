@@ -67,8 +67,6 @@ model_client = OpenAIChatCompletionClient(
 )
 
 
-
-
 class ChatUserInput(BaseModel):
     message: str
     user_id: str
@@ -231,8 +229,9 @@ class ChatController(Controller):
         )
 
         def ask_input(prompt: str):
-            return input(prompt or "Action required: ")
-
+            logger.info("Skipping user input in non-interactive mode.")
+            return "[NO INPUT]"
+        
         user_agent = UserProxyAgent(
             "user_agent",
             description="A human user. This agent is to be selected if the assistant agents need human action to work",
