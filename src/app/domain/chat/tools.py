@@ -1,6 +1,7 @@
 import os
 import asyncpraw
 
+import uuid
 from uuid import UUID
 from structlog import get_logger
 from redvid import Downloader
@@ -16,6 +17,11 @@ from .utils import (
 )
 from google_auth_oauthlib.flow import Flow
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
+from kokoro import KPipeline
+from IPython.display import display, Audio
+import soundfile as sf
+import torch
+import os
 
 __all__ = [
     "generate_auth_url_youtube",
@@ -177,8 +183,7 @@ async def get_video_details(
     """
 
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        text = " ".join(segment["text"] for segment in transcript)
+        text = await extract_transcript_youtube(video_id)
         return {"source": "transcript", "content": text}
     except NoTranscriptFound:
         pass
@@ -269,3 +274,60 @@ async def upload_to_youtube(
         "id": youtube_id,
         "status_code": 201,
     }
+
+
+
+async def extract_transcript_youtube(video_id: str) -> str:
+    """
+    Extracts the transcript of a YouTube video.
+
+    Args:
+        video_id (str): The ID of the YouTube video.
+
+    Returns:
+        str: The transcript of the video.
+    """
+    transcript = YouTubeTranscriptApi.get_transcript(video_id)
+    text = " ".join(segment["text"] for segment in transcript)
+    return text
+
+
+
+
+async def text_to_speech(text: str) -> str:
+    """
+    Converts text to speech.
+
+    Args:
+        text (str): The text to convert.
+
+    Returns:
+        str: The file path that the audio is saved.
+    """
+    os.environ["ONNX_PROVIDER"] = "CUDAExecutionProvider"
+
+    # 🇺🇸 'a' => American English, 🇬🇧 'b' => British English
+    pipeline = KPipeline(lang_code="a")
+
+
+    text = """
+    Yes, that MANY player is just 10 percent of the community. Even F.G.O player like myself didn't bother about that. It's just refreshing to see saber in different outfit
+    """
+
+    generator = pipeline(
+        text,
+        voice="af_heart",
+        speed=1,
+        split_pattern=r"\n+",
+    )
+    random_uuid = UUID(int=uuid.uuid4().int)
+    saved_file_path = f"{random_uuid}.wav"
+
+    for i, (gs, ps, audio) in enumerate(generator):
+        print(i)  # i => index
+        print(gs)  # gs => graphemes/text
+        print(ps)  # ps => phonemes
+        display(Audio(data=audio, rate=24000, autoplay=i == 0))
+        sf.write(saved_file_path, audio, 24000)
+        
+    return saved_file_path

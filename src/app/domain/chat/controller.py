@@ -67,60 +67,121 @@ model_client = OpenAIChatCompletionClient(
 )
 
 
+
+
 class ChatUserInput(BaseModel):
     message: str
+    user_id: str
 
 
 class ChatAuth(BaseModel):
-    email: str
+    username: str
     password: str
 
 
 class ChatController(Controller):
-    tags = ["Chats"]
-    
-    @get("/api/chats/test")
-    async def test(self) -> str:
-        logger.info("SCOPES")
-        # logger.info(list(SCOPES))
-        logger.info(type(SCOPES))
-        logger.info(SCOPES)
-        return "Hello world"
+
     @post("/api/chats/authenticate")
     async def authenticate(self, data: ChatAuth, session_id: UUID) -> None:
-        res = await login(session_id, data.email, data.password)
-        if res.get("error"):
+        res = await login(session_id, data.username, data.password)
+        if not res.get("access_token"):
             raise HTTPException(status_code=401, detail="Failed to authenticate")
         await save_token(session_id, res["access_token"])
-        
-        
-        
-    @get("/api/chats/oauth2callback")
-    async def oauth2callback(self, request:Request) -> Response:
-        code = request.query_params.get("code")
-        if not code:
-            raise NotAuthorizedException("Missing code parameter")
 
-        flow = Flow.from_client_secrets_file(
-            CLIENT_SECRETS, scopes=SCOPES, redirect_uri=OAUTH_REDIRECT_URI
-        )
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        async with aiofile.async_open(TOKEN, "w") as f:
-            await f.write(creds.to_json())
-        return Response(status_code=200, content="Authenticated successfully", media_type="application/json")
-
-    
-    @get("/api/chats/{session_id: str}")
-    async def list_chats(self, session_id: UUID) -> list:
+    @get("/api/chats/{user_id: uuid}")
+    async def list_chats(
+        self,
+        user_id: Annotated[UUID, "The user ID"],
+    ) -> list:
         """List all chats for a given session."""
 
-        chat = await get_chat_history(session_id)
-        return chat.get("chat_history", [])
+        return await get_user_chats(user_id)
 
-    @post("/api/chats/{session_id: uuid}")
+    @get("/api/chats/{user_id: uuid}/channels/{session_id: uuid}/list")
+    async def list_chat_messages(
+        self,
+        user_id: Annotated[UUID, "The user ID"],
+        session_id: Annotated[UUID, "The chat session ID"],
+    ) -> list:
+        """List all chats for a given session."""
+
+        messages = await get_chat_conversations(user_id, session_id)
+        return messages.get("chat_history", [])
+
+    @get("/api/chats/{user_id: uuid}/channels/{session_id: uuid}")
+    async def get_user_chat_detail(
+        self,
+        user_id: Annotated[UUID, "The user ID"],
+        session_id: Annotated[UUID, "The chat session ID"],
+    ) -> dict[str, any] | None:
+        """Get detailed user chat detail for a given session."""
+        all_user_chats = await load_user_chats()
+        user_chats = all_user_chats.get(str(user_id))
+
+        if user_chats is None:
+            raise NotFoundException(
+                detail="User Chat History not found", status_code=404
+            )
+
+        for chat in user_chats:
+            if chat["chat_id"] == str(session_id):
+                return chat
+        # user's chat session hasn't created yet 
+        return {}
+
+    @post("/api/chats/{user_id: uuid}/channels/{session_id: uuid}/delete")
+    async def delete_user_chat_session(
+        self,
+        user_id: Annotated[UUID, "The user ID"],
+        session_id: Annotated[UUID, "The chat session ID"],
+    ) -> Response:
+        """Delete the given session of the user."""
+        all_user_chats = await load_user_chats()
+        user_chats = all_user_chats.get(str(user_id))
+
+        if user_chats is None:
+            raise NotFoundException(
+                detail="User Chat History not found", status_code=404
+            )
+
+        # Delete the session
+        new_chat_history = [
+            chat for chat in user_chats if chat["chat_id"] != str(session_id)
+        ]
+        all_user_chats[str(user_id)] = new_chat_history
+        await save_user_chats(all_user_chats)
+
+        # Delete the team state by off-loading with background task
+        return Response(
+            content={"chat_id": str(session_id)},
+            status_code=200,
+            background=BackgroundTask(delete_team_state, str(session_id)),
+        )
+
+    @get("/api/chats/{user_id: uuid}/channels/title/{session_id: uuid}")
+    async def generate_chat_title(
+        self,
+        user_id: Annotated[UUID, "The user ID"],
+        session_id: Annotated[UUID, "The chat session ID"],
+    ) -> Response:
+        conversations = await get_chat_conversations(user_id, session_id)
+
+        histories = conversations.get("chat_history", [])
+        title_input_text = ""
+
+        for history in histories[:2]:
+            title_input_text += f"{history['role']}: {history['message']}\n"
+
+        title = await generate_title(title_input_text)
+        await update_chat_title(str(user_id), str(session_id), title)
+
+        return Response(content={"title": title}, status_code=201)
+
+    @post("/api/chats/channels/{session_id: uuid}")
     async def query_chat(
-        self, session_id: Annotated[UUID, "The chat session ID"], data: ChatUserInput
+        self,
+        session_id: Annotated[UUID, "The chat session ID"],
+        data: ChatUserInput,
     ) -> Stream:
         """Chat with the HM3 API."""
         Path(chat_history_folder_path).mkdir(parents=True, exist_ok=True)

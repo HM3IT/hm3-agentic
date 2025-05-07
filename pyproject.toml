@@ -38,6 +38,9 @@ dependencies = [
     "google-auth-httplib2>=0.2.0",
     "asyncpraw>=7.2.0",
     "youtube-transcript-api>=1.0.3",
+    "kokoro>=0.9.4",
+    "onnxruntime-gpu>=1.21.1",
+    "soundfile>=0.13.1",
 ]
 
 keywords = ["litestar", "sqlalchemy", "alembic", "fullstack", "api", "asgi", "litestar", "spa"]

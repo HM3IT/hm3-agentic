@@ -28,7 +28,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/run/Dockerfile
-    restart: always
+    # restart: always
     # depends_on:
     #   db:
     #     condition: service_healthy
