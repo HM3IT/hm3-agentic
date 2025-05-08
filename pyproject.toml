@@ -41,6 +41,7 @@ dependencies = [
     "kokoro>=0.9.4",
     "onnxruntime-gpu>=1.21.1",
     "soundfile>=0.13.1",
+    "aioboto3>=14.2.0",
 ]
 
 keywords = ["litestar", "sqlalchemy", "alembic", "fullstack", "api", "asgi", "litestar", "spa"]

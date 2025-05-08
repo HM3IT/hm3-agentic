@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from .user_role import UserRole
+    from .chat import Chat
 
 
 class User(UUIDAuditBase):
@@ -27,6 +28,10 @@ class User(UUIDAuditBase):
     verified_at: Mapped[date] = mapped_column(nullable=True, default=None)
     joined_at: Mapped[date] = mapped_column(default=datetime.now)
     login_count: Mapped[int] = mapped_column(default=0)
+    
+    chats: Mapped[list["Chat"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     # -----------
     # ORM Relationships
     # ------------

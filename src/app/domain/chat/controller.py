@@ -184,6 +184,7 @@ class ChatController(Controller):
         """Chat with the HM3 API."""
         Path(chat_history_folder_path).mkdir(parents=True, exist_ok=True)
         user_input = data.message.strip()
+        user_id = data.user_id
 
         request_agent = AssistantAgent(
             name="hm3_social_media_agent",
@@ -240,7 +241,7 @@ class ChatController(Controller):
 
         external_termination = ExternalTermination()
 
-        hm3_team = SelectorGroupChat(
+        team = SelectorGroupChat(
             model_client=model_client,
             participants=[request_agent, auth_agent, user_agent, general_agent],
             termination_condition=external_termination
@@ -267,10 +268,11 @@ class ChatController(Controller):
             allow_repeated_speaker=True,
         )
 
-        team_state = await get_team_state(session_id)
+        team_state = await get_team_state(str(session_id))
+        await add_chat_to_user(user_id, str(session_id))
         if team_state:
-            await hm3_team.load_state(team_state)
+            await team.load_state(team_state)
 
         return Stream(
-            chat_stream(session_id, hm3_team, user_input, external_termination)
+            chat_stream(session_id, team, user_input, external_termination)
         )

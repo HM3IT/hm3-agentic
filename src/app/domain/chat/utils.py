@@ -1,22 +1,18 @@
 import os
 import json
-import aiofile
 import httpx
-
+import aiofile
+import aioboto3
+ 
 from uuid import UUID
+from structlog import getLogger
+
+
 from typing import Any, Annotated, Literal
-from pathlib import Path
 from structlog import getLogger
 from datetime import datetime, timezone
 
 from collections.abc import AsyncGenerator
-
-from google.auth.exceptions import RefreshError
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 
 from autogen_core import CancellationToken
 from autogen_core.models import FunctionExecutionResultMessage
@@ -35,18 +31,33 @@ from autogen_agentchat.messages import (
 from autogen_agentchat.conditions import ExternalTermination
 
 from litestar.serialization import encode_json
+from litestar.exceptions import NotFoundException
+
 from app.config.base import get_settings
+
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 
 __all__ = [
-    "load_sessions",
     "save_sessions",
-    "add_chat_entry",
+    "add_chat_session",
+    "add_chat_to_user",
     "get_token",
     "update_token",
-    "load_chat_history",
-    "get_chat_history",
+    "load_preference_memory",
+    "load_user_chats",
+    "get_chat_conversations",
+    "get_user_chats",
+    "update_chat_title",
+    "save_user_chats",
+    "delete_team_state",
     "upload_youtube_video",
+    "authenticate_youtube",
 ]
 
 logger = getLogger()
@@ -63,32 +74,38 @@ download_dir_path = chat.DOWNLOAD_FOLDER_PATH
 token_filepath = chat.TOKEN_FILEPATH
 clinet_secrets_filepath = chat.CLIENT_SECRETS_FILEPATH
 
+session_folder_path = os.environ["CHAT_HISTORY_FILE_PATH"] + "sessions"
+team_folder_path = os.environ["CHAT_HISTORY_FILE_PATH"] + "teams"
+user_chat_history_file_path = (
+    os.environ["USER_CHAT_HISTORY_FILE_PATH"] + "user_chat_history.json"
+)
+llm_name = os.environ["MODEL_NAME"]
 
-async def load_sessions():
-    if os.path.exists(session_file_path):
-        async with aiofile.async_open(session_file_path, "r") as f:
-            data = await f.read()
-            return json.loads(data)
-    return {}
 
-
-async def save_sessions(sessions):
+async def save_sessions(session_id: str, sessions: dict[str, Any]) -> None:
     logger.info("saving sessions")
+    session_file_path = f"{session_folder_path}/{session_id}.json"
+
     async with aiofile.async_open(session_file_path, "w") as f:
         await f.write(json.dumps(sessions, indent=2))
 
 
-async def add_chat_entry(
+async def add_chat_session(
     session_id: str,
     source: str,
     message: str,
     message_type: Literal["text", "tool_call", "tool_result"],
 ) -> None:
-    sessions = await load_sessions()
+    session_file_path = f"{session_folder_path}/{session_id}.json"
+    sessions = await async_read_json(session_file_path)
 
-    if session_id not in sessions:
-        sessions[session_id] = {"token": None, "chat_history": []}
-    sessions[session_id]["chat_history"].append(
+    if not sessions:
+        sessions = {"token": None, "chat_history": []}
+
+    if isinstance(sessions, str):
+        raise ValueError("Invalid session data")
+
+    sessions["chat_history"].append(
         {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": source,
@@ -96,56 +113,179 @@ async def add_chat_entry(
             "type": message_type,
         }
     )
-    await save_sessions(sessions)
+    await save_sessions(session_id=session_id, sessions=sessions)
 
 
-async def get_token(
-    session_id: Annotated[UUID, "The chat session ID"], key: str = "token"
-) -> str | None:
-    str_session_id = str(session_id)
-    sessions = await load_sessions()
-    if str_session_id in sessions:
-        return sessions[str_session_id].get(key)
-    return None
+async def get_token(session_id: Annotated[UUID, "The chat session ID"]) -> str | None:
+    session_file_path = f"{session_folder_path}/{str(session_id)}.json"
+    sessions = await async_read_json(session_file_path)
+
+    return sessions.get("token", None)
 
 
 async def update_token(
     session_id: str,
     token: str,
-    refresh_token: str | None = None,
 ) -> str:
-    sessions = await load_sessions()
-    if session_id not in sessions:
-        sessions[session_id] = {"token": token, "chat_history": []}
-    else:
-        sessions[session_id]["token"] = token
-        sessions[session_id]["refresh_token"] = refresh_token
-    await save_sessions(sessions)
+    session_file_path = f"{session_folder_path}/{session_id}.json"
+    sessions = await async_read_json(session_file_path)
+
+    sessions["token"] = token
+
+    await save_sessions(session_id, sessions)
     return "Authentication successful"
 
 
-async def get_chat_history(
-    session_id: Annotated[UUID, "The chat session ID"],
-) -> dict[str, Any]:
-    history = {"token": None, "chat_history": []}
+async def get_user_chats(
+    user_id: Annotated[UUID, "The user ID"],
+) -> list[dict[str, Any]]:
 
-    if os.path.exists(session_file_path):
-        data = json.loads(Path(session_file_path).read_text())
-        history = data.get(str(session_id), {"token": None, "chat_history": []})
-    return history
+    data = await load_user_chats()
+    user_id_str = str(user_id)
+    if user_id_str in data:
+        return data[user_id_str]
+
+    return []
 
 
-async def get_team_state(
-    session_id: Annotated[UUID, "The chat session ID"],
-) -> dict[str, Any]:
-    state_file_path = f"{team_dir_path}/{session_id}.json"
-    if os.path.exists(state_file_path):
-        return json.loads(Path(state_file_path).read_text())
+async def update_chat_title(user_id: str, session_id: str, title: str) -> None:
+    chat_history = await load_user_chats()
+    user_chats = chat_history.get(user_id)
+    if user_chats is None:
+        raise NotFoundException(detail="User Chat History not found", status_code=404)
 
+    for chat in user_chats:
+        if chat["chat_id"] == session_id:
+            chat["title"] = title
+    chat_history[user_id] = user_chats
+    await save_user_chats(chat_history)
+
+
+async def generate_title(input_text: str) -> str:
+
+    TOPIC_SYSTEM_PROMPT = """
+    You are a topic generator. Your job is to create a concise title based on the conversation between the user and the FOAI (Free Open Access Information) Agents.
+    The title must be no more than 5 words and output only the topic as a plain string.
+    Examples:
+    - FOAI New Request
+    - Missing Document Follow-Up
+    - FOAI Authorization Step 
+    """
+
+    user_message = f"Generate a brief topic that best summarizes the following conversation:\n\n{input_text}"
+
+    messages = [
+        {
+            "role": "user",
+            "content": [{"text": user_message}],
+        }
+    ]
+
+    system_prompts = [{"text": TOPIC_SYSTEM_PROMPT}]
+
+    boto_session = aioboto3.Session()
+    client = boto_session.client(
+        service_name="bedrock-runtime",
+        region_name=os.environ["AWS_REGION"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    response = await client.converse(
+        modelId=llm_name,
+        messages=messages,
+        system=system_prompts,
+        inferenceConfig={
+            "maxTokens": 2024,
+            "temperature": 0.2,
+            "topP": 0.9,
+        },
+    )
+
+    topic = response["output"]["message"]["content"][0]["text"]
+    return topic if topic else "Unknown Topic"
+
+
+async def load_user_chats() -> dict[str, Any]:
+    if os.path.exists(user_chat_history_file_path):
+        return await async_read_json(user_chat_history_file_path)
     return {}
 
 
-async def load_chat_history(
+async def save_user_chats(user_chats: dict[str, Any]) -> None:
+    async with aiofile.async_open(user_chat_history_file_path, "w") as f:
+        await f.write(json.dumps(user_chats, indent=2))
+
+
+async def add_chat_to_user(user_id: str, chat_id: str) -> None:
+    """
+    Updated user chat from user_chat_history_file_path json file by adding the new_user_chat
+    if it's already exists, simply update the updated_at
+    """
+    user_id = str(user_id)
+    chat_id = str(chat_id)
+    is_old_session = False
+
+    all_user_chats = await load_user_chats()
+    user_chats = all_user_chats.get(user_id, [])
+    current_datetime = datetime.now(timezone.utc).isoformat()
+
+    for chat in user_chats:
+        if chat["chat_id"] == chat_id:
+            chat["updated_at"] = current_datetime
+            is_old_session = True
+            break
+
+    if not is_old_session:
+        # new user chat
+        new_user_chat = {
+            "title": "New Chat",
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "created_at": current_datetime,
+            "updated_at": current_datetime,
+        }
+        user_chats.append(new_user_chat)
+
+    all_user_chats[user_id] = user_chats
+    await save_user_chats(all_user_chats)
+
+
+async def async_read_json(file_path: str) -> dict[str, Any]:
+    if os.path.exists(file_path):
+        async with aiofile.async_open(file_path, "r") as f:
+            content = await f.read()
+            if content:
+                return json.loads(content)
+    return {}
+
+
+async def get_chat_conversations(
+    user_id: Annotated[UUID, "The user ID"],
+    session_id: Annotated[UUID, "The chat session ID"],
+) -> dict[str, Any]:
+    session_id_str = str(session_id)
+    user_chats = await get_user_chats(user_id)
+
+    if user_chats:
+        for chat in user_chats:
+            if chat["chat_id"] == session_id_str:
+                session_file_path = f"{session_folder_path}/{session_id_str}.json"
+                return await async_read_json(session_file_path)
+
+    return {"token": None, "chat_history": []}
+
+
+async def get_team_state(
+    session_id: str,
+) -> dict[str, Any] | None:
+
+    state_file_path = f"{team_folder_path}/{session_id}.json"
+    if os.path.exists(state_file_path):
+        return await async_read_json(state_file_path)
+    return None
+
+
+async def load_preference_memory(
     session_id: Annotated[UUID, "The chat session ID"], user_memory: "ListMemory"
 ) -> "ListMemory":
     """
@@ -160,9 +300,7 @@ async def load_chat_history(
         ListMemory: the user_memory with the history loaded.
     """
     await user_memory.clear()
-    history = await get_chat_history(session_id)
-    logger.info("reloading history")
-    logger.info(history)
+    history = await get_chat_conversations(session_id)
 
     if history["chat_history"]:
         for entry in history["chat_history"]:
@@ -254,20 +392,20 @@ async def chat_stream(
                 continue
 
             if source == "user" or source == "user_proxy" or source == "user_agent":
-                await add_chat_entry(str(session_id), source, content, message_type)
+                await add_chat_session(str(session_id), source, content, message_type)
                 continue
 
             if "TERMINATE" in content:
                 content = content.split("TERMINATE", 1)[0].strip()
 
             if isinstance(message, TextMessage):
-                await add_chat_entry(str(session_id), source, content, message_type)
+                await add_chat_session(str(session_id), source, content, message_type)
 
             if isinstance(message, ToolCallRequestEvent):
                 tool_name = message.content[0].name
                 content = f"Calling tool: {tool_name}"
                 message_type = "tool_call"
-                await add_chat_entry(str(session_id), source, content, message_type)
+                await add_chat_session(str(session_id), source, content, message_type)
 
             if isinstance(
                 message, (FunctionExecutionResultMessage, ToolCallSummaryMessage)
@@ -281,8 +419,8 @@ async def chat_stream(
                 tool_name = getattr(item, "name", "Tool execution result")
                 tool_result = getattr(item, "content", item)
                 message_type = "tool_result"
-                content = f"```py\n{tool_result}\n```"
-                await add_chat_entry(str(session_id), source, content, message_type)
+                content = f"```json\n{tool_result}\n```"
+                await add_chat_session(str(session_id), source, content, message_type)
 
             yield encode_json(
                 {"type": message_type, "role": source, "message": content}
@@ -290,21 +428,51 @@ async def chat_stream(
             continue
 
         team_state = await team.save_state()
-        chat_history = json.dumps(team_state, ensure_ascii=False, indent=2, default=str)
-        await save_chat_history(session_id, chat_history)
 
-    except Exception:
+        await save_team_state(
+            str(session_id),
+            json.dumps(team_state, ensure_ascii=False, indent=2, default=str),
+        )
+
+    except Exception as e:
+        logger.info(e)
 
         err = {"role": "system", "message": " An error occurred—please try again."}
         yield (json.dumps(err) + "\n").encode("utf-8")
 
 
-async def save_chat_history(
-    session_id: Annotated[UUID, "The chat session ID"], team_state: str
-) -> None:
-    logger.info("saving data")
-    async with aiofile.async_open(f"{team_dir_path}/{session_id}.json", "w") as f:
+async def save_team_state(session_id: str, team_state: str) -> None:
+    logger.info("Saving team state: " + str(session_id))
+    async with aiofile.async_open(f"{team_folder_path}/{session_id}.json", "w") as f:
         await f.write(team_state)
+
+
+def delete_team_state(session_id: str) -> None:
+    delete_team_file_path = f"{team_folder_path}/{session_id}.json"
+
+    if os.path.exists(delete_team_file_path):
+        logger.info("Found the state file")
+        try:
+            os.remove(delete_team_file_path)
+            logger.info("State file deleted successfully.")
+        except OSError as e:
+            logger.error(f"Failed to delete state file: {e}")
+    else:
+        logger.info("State file not found.")
+
+
+async def login(session_id: UUID, email: str, password: str) -> dict:
+    """Login to the FOIAKit API and retrieve a token."""
+
+    url = f"{API_BASE_URL}/auth/login"
+    response = await make_request(
+        url=url,
+        session_id=session_id,
+        method="POST",
+        data={"email": email, "password": password, "type": "ANALYST"},
+    )
+
+    return response
 
 
 async def authenticate_youtube():
@@ -373,17 +541,3 @@ async def save_download_history(
     logger.info("saving downloaded history")
     async with aiofile.async_open(f"{download_dir_path}/{session_id}.json", "w") as f:
         await f.write(json.dumps(history, indent=2))
-
-
-async def login(session_id: UUID, email: str, password: str) -> dict:
-    """Login to the targeted API that u want to fetch data from and retrieve a token."""
-
-    url = f"{API_BASE_URL}/auth/tokens"
-    response = await make_request(
-        url=url,
-        session_id=session_id,
-        method="POST",
-        data={"email": email, "password": password, "type": "ANALYST"},
-    )
-
-    return response
