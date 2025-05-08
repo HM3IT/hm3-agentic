@@ -3,10 +3,12 @@ import json
 import httpx
 import aiofile
 import aioboto3
- 
+
 from uuid import UUID
 from structlog import getLogger
 
+from sqlalchemy import select
+from sqlalchemy.orm import load_only
 
 from typing import Any, Annotated, Literal
 from structlog import getLogger
@@ -32,8 +34,12 @@ from autogen_agentchat.conditions import ExternalTermination
 
 from litestar.serialization import encode_json
 from litestar.exceptions import NotFoundException
+from litestar.di import Provide
 
 from app.config.base import get_settings
+from app.domain.chat.service import ChatMessageService
+from app.domain.chat.deps import provide_chat_service
+from app.db import models as m
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -44,17 +50,6 @@ from googleapiclient.http import MediaFileUpload
 
 
 __all__ = [
-    "save_sessions",
-    "add_chat_session",
-    "add_chat_to_user",
-    "get_token",
-    "update_token",
-    "load_preference_memory",
-    "load_user_chats",
-    "get_chat_conversations",
-    "get_user_chats",
-    "update_chat_title",
-    "save_user_chats",
     "delete_team_state",
     "upload_youtube_video",
     "authenticate_youtube",
@@ -74,91 +69,9 @@ download_dir_path = chat.DOWNLOAD_FOLDER_PATH
 token_filepath = chat.TOKEN_FILEPATH
 clinet_secrets_filepath = chat.CLIENT_SECRETS_FILEPATH
 
-session_folder_path = os.environ["CHAT_HISTORY_FILE_PATH"] + "sessions"
 team_folder_path = os.environ["CHAT_HISTORY_FILE_PATH"] + "teams"
-user_chat_history_file_path = (
-    os.environ["USER_CHAT_HISTORY_FILE_PATH"] + "user_chat_history.json"
-)
+
 llm_name = os.environ["MODEL_NAME"]
-
-
-async def save_sessions(session_id: str, sessions: dict[str, Any]) -> None:
-    logger.info("saving sessions")
-    session_file_path = f"{session_folder_path}/{session_id}.json"
-
-    async with aiofile.async_open(session_file_path, "w") as f:
-        await f.write(json.dumps(sessions, indent=2))
-
-
-async def add_chat_session(
-    session_id: str,
-    source: str,
-    message: str,
-    message_type: Literal["text", "tool_call", "tool_result"],
-) -> None:
-    session_file_path = f"{session_folder_path}/{session_id}.json"
-    sessions = await async_read_json(session_file_path)
-
-    if not sessions:
-        sessions = {"token": None, "chat_history": []}
-
-    if isinstance(sessions, str):
-        raise ValueError("Invalid session data")
-
-    sessions["chat_history"].append(
-        {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "role": source,
-            "message": message,
-            "type": message_type,
-        }
-    )
-    await save_sessions(session_id=session_id, sessions=sessions)
-
-
-async def get_token(session_id: Annotated[UUID, "The chat session ID"]) -> str | None:
-    session_file_path = f"{session_folder_path}/{str(session_id)}.json"
-    sessions = await async_read_json(session_file_path)
-
-    return sessions.get("token", None)
-
-
-async def update_token(
-    session_id: str,
-    token: str,
-) -> str:
-    session_file_path = f"{session_folder_path}/{session_id}.json"
-    sessions = await async_read_json(session_file_path)
-
-    sessions["token"] = token
-
-    await save_sessions(session_id, sessions)
-    return "Authentication successful"
-
-
-async def get_user_chats(
-    user_id: Annotated[UUID, "The user ID"],
-) -> list[dict[str, Any]]:
-
-    data = await load_user_chats()
-    user_id_str = str(user_id)
-    if user_id_str in data:
-        return data[user_id_str]
-
-    return []
-
-
-async def update_chat_title(user_id: str, session_id: str, title: str) -> None:
-    chat_history = await load_user_chats()
-    user_chats = chat_history.get(user_id)
-    if user_chats is None:
-        raise NotFoundException(detail="User Chat History not found", status_code=404)
-
-    for chat in user_chats:
-        if chat["chat_id"] == session_id:
-            chat["title"] = title
-    chat_history[user_id] = user_chats
-    await save_user_chats(chat_history)
 
 
 async def generate_title(input_text: str) -> str:
@@ -205,50 +118,6 @@ async def generate_title(input_text: str) -> str:
     return topic if topic else "Unknown Topic"
 
 
-async def load_user_chats() -> dict[str, Any]:
-    if os.path.exists(user_chat_history_file_path):
-        return await async_read_json(user_chat_history_file_path)
-    return {}
-
-
-async def save_user_chats(user_chats: dict[str, Any]) -> None:
-    async with aiofile.async_open(user_chat_history_file_path, "w") as f:
-        await f.write(json.dumps(user_chats, indent=2))
-
-
-async def add_chat_to_user(user_id: str, chat_id: str) -> None:
-    """
-    Updated user chat from user_chat_history_file_path json file by adding the new_user_chat
-    if it's already exists, simply update the updated_at
-    """
-    user_id = str(user_id)
-    chat_id = str(chat_id)
-    is_old_session = False
-
-    all_user_chats = await load_user_chats()
-    user_chats = all_user_chats.get(user_id, [])
-    current_datetime = datetime.now(timezone.utc).isoformat()
-
-    for chat in user_chats:
-        if chat["chat_id"] == chat_id:
-            chat["updated_at"] = current_datetime
-            is_old_session = True
-            break
-
-    if not is_old_session:
-        # new user chat
-        new_user_chat = {
-            "title": "New Chat",
-            "chat_id": chat_id,
-            "user_id": user_id,
-            "created_at": current_datetime,
-            "updated_at": current_datetime,
-        }
-        user_chats.append(new_user_chat)
-
-    all_user_chats[user_id] = user_chats
-    await save_user_chats(all_user_chats)
-
 
 async def async_read_json(file_path: str) -> dict[str, Any]:
     if os.path.exists(file_path):
@@ -257,50 +126,35 @@ async def async_read_json(file_path: str) -> dict[str, Any]:
             if content:
                 return json.loads(content)
     return {}
-
-
-async def get_chat_conversations(
-    user_id: Annotated[UUID, "The user ID"],
-    session_id: Annotated[UUID, "The chat session ID"],
-) -> dict[str, Any]:
-    session_id_str = str(session_id)
-    user_chats = await get_user_chats(user_id)
-
-    if user_chats:
-        for chat in user_chats:
-            if chat["chat_id"] == session_id_str:
-                session_file_path = f"{session_folder_path}/{session_id_str}.json"
-                return await async_read_json(session_file_path)
-
-    return {"token": None, "chat_history": []}
-
+ 
 
 async def get_team_state(
-    session_id: str,
+    chat_id: str,
 ) -> dict[str, Any] | None:
 
-    state_file_path = f"{team_folder_path}/{session_id}.json"
+    state_file_path = f"{team_folder_path}/{chat_id}.json"
     if os.path.exists(state_file_path):
         return await async_read_json(state_file_path)
     return None
 
 
 async def load_preference_memory(
-    session_id: Annotated[UUID, "The chat session ID"], user_memory: "ListMemory"
+    chat_id: Annotated[UUID, "The chat session ID"], user_memory: "ListMemory"
 ) -> "ListMemory":
     """
-    Reloads the chat history for a given session_id from a JSON file, and populates
+    Reloads the chat history for a given chat_id from a JSON file, and populates
     the user_memory with the history.
 
     Args:
-        session_id (str): the session_id to load the history for.
+        chat_id (str): the chat_id to load the history for.
         user_memory (ListMemory): the memory to populate with the history.
 
     Returns:
         ListMemory: the user_memory with the history loaded.
     """
+    # TODO refactor
     await user_memory.clear()
-    history = await get_chat_conversations(session_id)
+    history = {}
 
     if history["chat_history"]:
         for entry in history["chat_history"]:
@@ -317,7 +171,7 @@ async def load_preference_memory(
         if history["token"]:
             await user_memory.add(
                 MemoryContent(
-                    content=f"User has authenticated the session_id or has logged in.",
+                    content=f"User has authenticated the chat_id or has logged in.",
                     mime_type=MemoryMimeType.TEXT,
                 )
             )
@@ -325,8 +179,20 @@ async def load_preference_memory(
     return user_memory
 
 
+async def get_token(chat_id: str):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.config.app import alchemy  
+    
+    get_user_token_query = select(m.Chat).where(m.Chat.id == chat_id).options(load_only(m.Chat.token))
+    
+    async with alchemy.get_session() as db_session:
+        result = await db_session.execute(get_user_token_query)
+        token = result.scalar_one_or_none()
+        return token
+
+
 async def make_request(
-    session_id: Annotated[UUID, "The chat session ID"],
+    chat_id: Annotated[UUID, "The chat session ID"],
     url: str,
     method: str = "GET",
     data: dict[str, Any] | None = None,
@@ -334,14 +200,12 @@ async def make_request(
     """Make a request to the API with proper error handling.
     Args:
         url (str): The URL to make the request to.
-        session_id (str): The session ID to use for authentication.
+        chat_id (str): The session ID to use for authentication.
         method (str, optional): The HTTP method to use. Defaults to "GET".
         data (dict[str, Any], optional): The data to send with the request. Defaults to None.
     """
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
-
-    token = await get_token(session_id)
-
+    token = await get_token(str(chat_id))
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
@@ -363,10 +227,11 @@ async def make_request(
 
 
 async def chat_stream(
-    session_id: Annotated[UUID, "The chat session ID"],
+    chat_id: str,
     team: SelectorGroupChat,
     user_input: str,
     termination: ExternalTermination,
+    chat_message_service: ChatMessageService,
 ) -> AsyncGenerator[bytes, None]:
 
     stream = team.run_stream(task=user_input, cancellation_token=CancellationToken())
@@ -379,7 +244,8 @@ async def chat_stream(
                 message, (ToolCallExecutionEvent, MemoryQueryEvent, ThoughtEvent)
             ):
                 continue
-            message_type = "text"
+
+            message_type: Literal["text", "tool_call", "tool_result"] = "text"
             source = getattr(message, "source", "")
             content = getattr(message, "content", "")
 
@@ -392,20 +258,38 @@ async def chat_stream(
                 continue
 
             if source == "user" or source == "user_proxy" or source == "user_agent":
-                await add_chat_session(str(session_id), source, content, message_type)
+                await chat_message_service.create(
+                    data={
+                        "role": source,
+                        "content": content,
+                        "type": message_type,
+                    }
+                )
                 continue
 
             if "TERMINATE" in content:
                 content = content.split("TERMINATE", 1)[0].strip()
 
             if isinstance(message, TextMessage):
-                await add_chat_session(str(session_id), source, content, message_type)
+                await chat_message_service.create(
+                    data={
+                        "role": source,
+                        "content": content,
+                        "type": message_type,
+                    }
+                )
 
             if isinstance(message, ToolCallRequestEvent):
                 tool_name = message.content[0].name
                 content = f"Calling tool: {tool_name}"
                 message_type = "tool_call"
-                await add_chat_session(str(session_id), source, content, message_type)
+                await chat_message_service.create(
+                    data={
+                        "role": source,
+                        "content": content,
+                        "type": message_type,
+                    }
+                )
 
             if isinstance(
                 message, (FunctionExecutionResultMessage, ToolCallSummaryMessage)
@@ -420,7 +304,13 @@ async def chat_stream(
                 tool_result = getattr(item, "content", item)
                 message_type = "tool_result"
                 content = f"```json\n{tool_result}\n```"
-                await add_chat_session(str(session_id), source, content, message_type)
+                await chat_message_service.create(
+                    data={
+                        "role": source,
+                        "content": content,
+                        "type": message_type,
+                    }
+                )
 
             yield encode_json(
                 {"type": message_type, "role": source, "message": content}
@@ -430,7 +320,7 @@ async def chat_stream(
         team_state = await team.save_state()
 
         await save_team_state(
-            str(session_id),
+            chat_id,
             json.dumps(team_state, ensure_ascii=False, indent=2, default=str),
         )
 
@@ -441,14 +331,14 @@ async def chat_stream(
         yield (json.dumps(err) + "\n").encode("utf-8")
 
 
-async def save_team_state(session_id: str, team_state: str) -> None:
-    logger.info("Saving team state: " + str(session_id))
-    async with aiofile.async_open(f"{team_folder_path}/{session_id}.json", "w") as f:
+async def save_team_state(chat_id: str, team_state: str) -> None:
+    logger.info("Saving team state: " + chat_id)
+    async with aiofile.async_open(f"{team_folder_path}/{chat_id}.json", "w") as f:
         await f.write(team_state)
 
 
-def delete_team_state(session_id: str) -> None:
-    delete_team_file_path = f"{team_folder_path}/{session_id}.json"
+def delete_team_state(chat_id: str) -> None:
+    delete_team_file_path = f"{team_folder_path}/{chat_id}.json"
 
     if os.path.exists(delete_team_file_path):
         logger.info("Found the state file")
@@ -461,13 +351,13 @@ def delete_team_state(session_id: str) -> None:
         logger.info("State file not found.")
 
 
-async def login(session_id: UUID, email: str, password: str) -> dict:
+async def login(chat_id: UUID, email: str, password: str) -> dict:
     """Login to the FOIAKit API and retrieve a token."""
 
     url = f"{API_BASE_URL}/auth/login"
     response = await make_request(
         url=url,
-        session_id=session_id,
+        chat_id=chat_id,
         method="POST",
         data={"email": email, "password": password, "type": "ANALYST"},
     )
@@ -536,8 +426,8 @@ async def upload_youtube_video(
 
 
 async def save_download_history(
-    session_id: Annotated[UUID, "The chat session ID"], history: list[dict[str, Any]]
+    chat_id: Annotated[UUID, "The chat session ID"], history: list[dict[str, Any]]
 ) -> None:
     logger.info("saving downloaded history")
-    async with aiofile.async_open(f"{download_dir_path}/{session_id}.json", "w") as f:
+    async with aiofile.async_open(f"{download_dir_path}/{chat_id}.json", "w") as f:
         await f.write(json.dumps(history, indent=2))

@@ -7,7 +7,7 @@ from pathlib import Path
 from structlog import getLogger
 from pydantic import BaseModel
 from google_auth_oauthlib.flow import Flow
-from litestar import Controller, get, post, Request
+from litestar import Controller, get, post
 from litestar.exceptions import HTTPException, NotAuthorizedException, NotFoundException
 from litestar.response import Stream, Response
 from litestar.di import Provide
@@ -24,7 +24,13 @@ from autogen_agentchat.conditions import (
 )
 
 from app.config.base import get_settings
-from app.domain.chat.utils import chat_stream, get_team_state, delete_team_state, login, generate_title
+from app.domain.chat.utils import (
+    chat_stream,
+    get_team_state,
+    delete_team_state,
+    login,
+    generate_title,
+)
 from app.domain.chat.tools import (
     download_reddit_video,
     upload_to_youtube,
@@ -98,7 +104,6 @@ class ChatController(Controller):
             raise HTTPException(status_code=401, detail="Failed to authenticate")
         await save_token(session_id, res["access_token"])
 
-
     @get("/create")
     async def create_chat(
         self,
@@ -107,10 +112,11 @@ class ChatController(Controller):
     ) -> Chat:
         """List all chats of the user."""
         user_id = current_user.id
-        chat_obj = await chat_service.create(data={"user_id": user_id, "title": "New Chat"})
+        chat_obj = await chat_service.create(
+            data={"user_id": user_id, "title": "New Chat"}
+        )
 
-        return chat_service.to_schema(chat_obj, schema_type=Chat) 
-        
+        return chat_service.to_schema(chat_obj, schema_type=Chat)
 
     @get("")
     async def list_chats(
@@ -197,11 +203,15 @@ class ChatController(Controller):
         chat_service: ChatService,
         current_user: m.User,
     ) -> Response:
-        chat_messages, count = await chat_message_service.list_and_count(chat_id=chat_id)
+        chat_messages, count = await chat_message_service.list_and_count(
+            chat_id=chat_id
+        )
 
-        if count <  2:
-            raise HTTPException(detail="Not enough messages to generate title", status_code=400)
- 
+        if count < 2:
+            raise HTTPException(
+                detail="Not enough messages to generate title", status_code=400
+            )
+
         title_input_text = ""
 
         for chat_mesg in chat_messages[:2]:
@@ -308,8 +318,10 @@ class ChatController(Controller):
         )
         chat_id_str = str(chat_id)
         team_state = await get_team_state(chat_id_str)
-        await chat_message_service.create(data={"chat_id":chat_id_str , "content": user_input, "role": "user"})
- 
+        await chat_message_service.create(
+            data={"chat_id": chat_id_str, "content": user_input, "role": "user"}
+        )
+
         if team_state:
             await team.load_state(team_state)
 
