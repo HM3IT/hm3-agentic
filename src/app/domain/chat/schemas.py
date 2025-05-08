@@ -37,8 +37,8 @@ class ToolAuthURLResponse(ToolReponse):
 class ChatMessage(CamelizedBaseStruct):
     id: str
     role: str
-    message: Literal["text", "tool_call", "tool_result"]
-    type: str
+    content: str
+    type:  Literal["text", "tool_call", "tool_result"]
     created_at: str
 
 

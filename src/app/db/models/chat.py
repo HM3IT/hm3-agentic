@@ -41,6 +41,6 @@ class ChatMessage(UUIDAuditBase):
 
     role: Mapped[str] = mapped_column(nullable=False)
     type: Mapped[str] = mapped_column(nullable=False, default="text")
-    message: Mapped[str] = mapped_column(nullable=False)
+    content: Mapped[str] = mapped_column(nullable=False)
 
     chat: Mapped["Chat"] = relationship(back_populates="messages")
